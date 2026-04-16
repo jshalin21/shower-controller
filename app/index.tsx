@@ -35,6 +35,9 @@ export default function HomeScreen() {
   const tracksRef = useRef<any[]>([]);
   const activePlaylistUriRef = useRef<string | null>(null);
 
+  const shuffleRef = useRef<boolean>(false);
+  const isPlayingRef = useRef<boolean>(false);
+
   const [request, response, promptAsync] = useAuthRequest(
     {
       clientId: "edf4a8aa3aad49cea5aa54baa213ba7e",
@@ -217,6 +220,8 @@ export default function HomeScreen() {
 
       if (!data.item) return;
 
+      isPlayingRef.current = data.is_playing;
+
       // 2. Extract the names
       const rawSongName = data.item.name || "Unknown";
       const rawArtistName = data.item.artists?.[0]?.name || "Unknown";
@@ -394,21 +399,43 @@ export default function HomeScreen() {
         } else if (decoded.startsWith("GET_PL_PAGE:")) {
           const index = parseInt(decoded.split(":")[1]);
           sendPlaylistChunk(connected, index);
+        } else if (decoded.startsWith("QUEUE_TRACK:")) {
+          // Extracts the number from "QUEUE_TRACK:5"
+          const trackIndex = parseInt(decoded.split(":")[1]);
+          queueTrack(trackIndex);
         } else {
           switch (decoded) {
             case "PLAY":
-              spotifyCommand("play", "PUT");
-              break;
+              if (isPlayingRef.current) {
+                console.log(
+                  "Safeguard: Music is already playing. Ignoring redundant PLAY command.",
+                );
+              } else {
+                spotifyCommand("play", "PUT");
+                break;
+              }
+
             case "PAUSE":
-              spotifyCommand("pause", "PUT");
-              break;
+              if (!isPlayingRef.current) {
+                console.log(
+                  "Safeguard: Music is already paused. Ignoring redundant PAUSE command.",
+                );
+              } else {
+                spotifyCommand("pause", "PUT");
+                break;
+              }
             case "NEXT":
               spotifyCommand("next", "POST");
+              isPlayingRef.current = true;
               setTimeout(() => fetchAndSendCurrentlyPlaying(connected), 2000);
               break;
             case "PREV":
               spotifyCommand("previous", "POST");
+              isPlayingRef.current = true;
               setTimeout(() => fetchAndSendCurrentlyPlaying(connected), 2000);
+              break;
+            case "TOGGLE_SHUFFLE":
+              toggleShuffle();
               break;
             default:
               console.log("Unknown hardware command:", decoded);
@@ -451,6 +478,35 @@ export default function HomeScreen() {
       console.error("Error fetching devices:", error);
       return null;
     }
+  };
+
+  const queueTrack = async (trackIndex: number) => {
+    // Grab the specific track data from our downloaded memory
+    const trackData = tracksRef.current[trackIndex];
+
+    if (!trackData || !trackData.item?.uri) {
+      console.log("Error: Could not find track URI to queue.");
+      return;
+    }
+
+    const trackUri = trackData.item.uri;
+    const trackName = trackData.item.name || "Unknown Track";
+    console.log(`Adding to queue: ${trackName}`);
+
+    // The endpoint is: /me/player/queue?uri={trackUri}
+    await spotifyCommand(`queue?uri=${encodeURIComponent(trackUri)}`, "POST");
+  };
+
+  // --- FEATURE 2: TOGGLE SHUFFLE ---
+  const toggleShuffle = async () => {
+    // Flip our local memory state (if it was false, make it true)
+    shuffleRef.current = !shuffleRef.current;
+    const newState = shuffleRef.current;
+
+    console.log(`Setting Shuffle to: ${newState}`);
+
+    // The endpoint is: /me/player/shuffle?state={true/false}
+    await spotifyCommand(`shuffle?state=${newState}`, "PUT");
   };
 
   const spotifyCommand = async (
