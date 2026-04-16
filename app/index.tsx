@@ -1,5 +1,6 @@
 import { Buffer } from "buffer";
 import { makeRedirectUri, useAuthRequest } from "expo-auth-session";
+import { useKeepAwake } from "expo-keep-awake";
 import * as WebBrowser from "expo-web-browser";
 import React, { useEffect, useRef, useState } from "react";
 import { FlatList, Text, TouchableOpacity, View } from "react-native";
@@ -19,6 +20,8 @@ const discovery = {
 };
 
 export default function HomeScreen() {
+  useKeepAwake();
+
   const [devices, setDevices] = useState<Device[]>([]);
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [messages, setMessages] = useState<string[]>([]);
