@@ -41,6 +41,8 @@ export default function HomeScreen() {
   const shuffleRef = useRef<boolean>(false);
   const isPlayingRef = useRef<boolean>(false);
 
+  const lastKnownDeviceIdRef = useRef<string | null>(null);
+
   const [request, response, promptAsync] = useAuthRequest(
     {
       clientId: "edf4a8aa3aad49cea5aa54baa213ba7e",
@@ -282,6 +284,31 @@ export default function HomeScreen() {
     setConnectedDevice(connected);
     await sendPlaylistsToHardware(connected);
 
+    if (tokenRef.current) {
+      try {
+        const res = await fetch(
+          "https://api.spotify.com/v1/me/player/currently-playing",
+          {
+            headers: { Authorization: `Bearer ${tokenRef.current}` },
+          },
+        );
+
+        if (res.status === 200) {
+          const data = await res.json();
+
+          if (data.shuffle_state !== undefined) {
+            shuffleRef.current = data.shuffle_state;
+            console.log(
+              "Hardware Connected. Initial Shuffle State synced:",
+              shuffleRef.current,
+            );
+          }
+        }
+      } catch (error) {
+        console.log("Could not silently sync initial playback state:", error);
+      }
+    }
+
     connected.monitorCharacteristicForService(
       SERVICE_UUID,
       CHAR_UUID,
@@ -356,6 +383,7 @@ export default function HomeScreen() {
               context_uri: activePlaylistUriRef.current,
               offset: { position: trackIndex },
             });
+            isPlayingRef.current = true;
 
             const trackData = tracksRef.current[trackIndex];
 
@@ -415,9 +443,9 @@ export default function HomeScreen() {
                 );
               } else {
                 spotifyCommand("play", "PUT");
-                break;
+                isPlayingRef.current = true;
               }
-
+              break;
             case "PAUSE":
               if (!isPlayingRef.current) {
                 console.log(
@@ -425,8 +453,9 @@ export default function HomeScreen() {
                 );
               } else {
                 spotifyCommand("pause", "PUT");
-                break;
+                isPlayingRef.current = false;
               }
+              break;
             case "NEXT":
               spotifyCommand("next", "POST");
               isPlayingRef.current = true;
@@ -460,6 +489,28 @@ export default function HomeScreen() {
   };
 
   const getAvailableDeviceId = async () => {
+    // try {
+    //   const response = await fetch(
+    //     "https://api.spotify.com/v1/me/player/devices",
+    //     {
+    //       headers: {
+    //         Authorization: `Bearer ${tokenRef.current}`,
+    //       },
+    //     },
+    //   );
+    //   const data = await response.json();
+    //   console.log("SPOTIFY SEES THESE DEVICES:", JSON.stringify(data, null, 2));
+
+    //   // If Spotify finds devices, return the ID of the first one available
+    //   if (data.devices && data.devices.length > 0) {
+    //     return data.devices[0].id;
+    //   }
+    //   return null;
+    // } catch (error) {
+    //   console.error("Error fetching devices:", error);
+    //   return null;
+    // }
+
     try {
       const response = await fetch(
         "https://api.spotify.com/v1/me/player/devices",
@@ -470,17 +521,28 @@ export default function HomeScreen() {
         },
       );
       const data = await response.json();
-      console.log("SPOTIFY SEES THESE DEVICES:", JSON.stringify(data, null, 2));
 
-      // If Spotify finds devices, return the ID of the first one available
+      // If Spotify finds devices, return the ID and SAVE IT
       if (data.devices && data.devices.length > 0) {
-        return data.devices[0].id;
+        const activeDevice = data.devices.find((d: any) => d.is_active);
+        const foundId = activeDevice ? activeDevice.id : data.devices[0].id;
+
+        // Save to memory for when the music gets paused!
+        lastKnownDeviceIdRef.current = foundId;
+        return foundId;
       }
-      return null;
     } catch (error) {
       console.error("Error fetching devices:", error);
-      return null;
     }
+
+    // --- EMERGENCY FALLBACK ---
+    // If the API says empty, but we remember a device from earlier, use it anyway!
+    if (lastKnownDeviceIdRef.current) {
+      console.log("API returned [], blindly firing at cached Device ID.");
+      return lastKnownDeviceIdRef.current;
+    }
+
+    return null;
   };
 
   const queueTrack = async (trackIndex: number) => {
